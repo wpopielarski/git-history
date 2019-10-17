@@ -87,4 +87,16 @@ class GitHistoryTest extends FlatSpec with Matchers with BeforeAndAfterAll {
 
     actual.toJSON.collect() should contain allOf ("""{"pickMe":{"c":"text1"}}""", """{"pickMe":{"c":"text2"}}""")
   }
+
+  "makeName" should "not add prefix" in {
+    val emptyPath = ""
+
+    GitHistory.makeName(emptyPath, "suffix") shouldBe "suffix"
+  }
+
+  it should "add path" in {
+    val path = "path"
+
+    GitHistory.makeName(path, "suffix") shouldBe "path.suffix"
+  }
 }

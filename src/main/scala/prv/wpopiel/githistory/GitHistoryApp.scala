@@ -43,15 +43,17 @@ object GitHistoryApp extends App {
  * ○ Number of created PRs
  */
 object GitHistory {
+  def makeName(path: String, name: String): String = {
+    if (path.isEmpty()) name else path + "." + name
+  }
+
   def pathFinder(struct: StructType, needField: String, path: String): List[String] = {
     struct.fields.foldLeft(List.empty[String]) { (acc, field) =>
       field match {
         case StructField(`needField`, StructType(_), _, _) =>
-          val _path = if (path.isEmpty()) field.name else path + "." + field.name
-          acc :+ _path
+          acc :+ makeName(path, needField)
         case StructField(name, typ @ StructType(_), _, _) =>
-          val _path = if (path.isEmpty()) name else path + "." + name
-          acc ++ pathFinder(typ, needField, _path)
+          acc ++ pathFinder(typ, needField, makeName(path, name))
         case _ => acc
       }
     }
