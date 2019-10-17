@@ -76,35 +76,23 @@ object GitHistory {
     .toList
   }
 
-  def runSingle(history: Dataset[Row], date: String): Unit = {
+  def runSingle(history: Dataset[Row], date: String, userPaths: Seq[String], repoPaths: Seq[String]): Unit = {
     val spark = history.sparkSession
     import spark.implicits._
     val payload = history
                   .where($"payload".isNotNull)
                   .select($"payload")
-    val superSchema = payload.schema
-
-    val userObjectNames = Seq("user", "owner", "merged_by")
-    val userPaths = userObjectNames.flatMap { needField =>
-      pathFinder(superSchema, needField, "")
-    }
     val users = allDataframes(history, userPaths)
                 .alias("user")
                 .where($"user".isNotNull)
                 .select($"user.id", $"user.login")
                 .distinct()
-
-    val repoObjectNames = Seq("repo")
-    val repoPaths = repoObjectNames.flatMap { needField =>
-      pathFinder(superSchema, needField, "")
-    }
     val repos = allDataframes(history, repoPaths)
                 .alias("repo")
                 .where($"repo".isNotNull)
                 .select($"repo.id", $"repo.name", $"repo.url", $"repo.forks_count", $"repo.stargazers_count")
                 .groupBy($"id", $"name", $"url")
                 .agg(max($"forks_count").as("forks_count"), max($"stargazers_count").as("stargazers_count"))
-
     val pulls = payload
                 .alias("payload")
                 .select($"payload.pull_request".alias("pr"))
@@ -137,7 +125,19 @@ object GitHistory {
                   .withColumn("date", subs(col("created_at"), 0, 10))
                   .drop($"created_at")
                   .cache()
+    val payload = history
+                  .where($"payload".isNotNull)
+                  .select($"payload")
+    val superSchema = payload.schema
+    val userObjectNames = Seq("user", "owner", "merged_by")
+    val userPaths = userObjectNames.flatMap { needField =>
+      pathFinder(superSchema, needField, "")
+    }
+    val repoObjectNames = Seq("repo")
+    val repoPaths = repoObjectNames.flatMap { needField =>
+      pathFinder(superSchema, needField, "")
+    }
     val dates = getDates(history)
-    dates.foreach(date => runSingle(history, date))
+    dates.foreach(date => runSingle(history.where($"date" === date), date, userPaths, repoPaths))
   }
 }
