@@ -111,8 +111,8 @@ object GitHistory {
     val repoWithPulls = repos
                         .join(repoPulls.withColumnRenamed("repo", "id"), Seq("id"), "left")
                         .na.fill(0, Seq("repo_pulls"))
-    usersWithPulls.write.json(s"data/${date}-users.json")
-    repoWithPulls.write.json(s"data/${date}-repos.json")
+    usersWithPulls.coalesce(numPartitions = 1).write.json(s"data/${date}-users.json")
+    repoWithPulls.coalesce(numPartitions = 1).write.json(s"data/${date}-repos.json")
   }
 
   def run(spark: SparkSession,
@@ -127,19 +127,18 @@ object GitHistory {
                   .withColumn("date", subs(col("created_at"), 0, 10))
                   .drop($"created_at")
                   .cache()
-    val payload = history
-                  .where($"payload".isNotNull)
-                  .select($"payload")
-    val superSchema = payload.schema
+    val superSchema = history
+                      .where($"payload".isNotNull)
+                      .select($"payload")
+                      .schema
+    val pathsFindInSchema = (objNames: Seq[String]) => objNames.flatMap { needField =>
+      pathFinder(superSchema, needField, "")
+    }
     val userObjectNames = Seq("user", "owner", "merged_by")
-    val userPaths = userObjectNames.flatMap { needField =>
-      pathFinder(superSchema, needField, "")
-    }
     val repoObjectNames = Seq("repo")
-    val repoPaths = repoObjectNames.flatMap { needField =>
-      pathFinder(superSchema, needField, "")
-    }
     val dates = getDates(history)
-    dates.foreach(date => runSingle(history.where($"date" === date), date, userPaths, repoPaths))
+    dates.foreach { date =>
+      runSingle(history.where($"date" === date), date, pathsFindInSchema(userObjectNames), pathsFindInSchema(repoObjectNames))
+    }
   }
 }
