@@ -8,6 +8,7 @@ import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.functions.{ substring => subs, _ }
+import org.apache.spark.sql.expressions.Window
 
 object GitHistoryApp extends App {
   val spark = SparkSession
@@ -62,8 +63,8 @@ object GitHistory {
   def allDataframes(df: Dataset[Row], paths: Seq[String]): Dataset[Row] = {
     paths match {
       case head :: tail => 
-        val zero = df.select(col(head))
-        tail.foldLeft(zero) { (acc, path) => acc.union(df.select(col(path))) }
+        val zero = df.select(col(head), col("created_at"))
+        tail.foldLeft(zero) { (acc, path) => acc.union(df.select(col(path), col("created_at"))) }
       case _ =>
         df
     }
@@ -78,23 +79,44 @@ object GitHistory {
     .toList
   }
 
+  object repo {
+    def apply(root: Dataset[Row], paths: Seq[String]): Dataset[Row] = {
+      val spark = root.sparkSession
+      import spark.implicits._
+      val byDate = Window
+                   .partitionBy($"id")
+                   .orderBy($"created_at".desc)
+      val repo = allDataframes(root, paths)
+                 .alias("repo")
+                 .where($"repo".isNotNull)
+                 .select($"created_at", $"repo.id", $"repo.name", $"repo.url", $"repo.forks_count", $"repo.stargazers_count", $"repo.open_issues_count")
+      repo
+      .withColumn("last", row_number.over(byDate))
+      .where($"last" === 1)
+      .drop($"last")
+    }
+  }
+
+  object user {
+    def apply(root: Dataset[Row], paths: Seq[String]): Dataset[Row] = {
+      val spark = root.sparkSession
+      import spark.implicits._
+      allDataframes(root, paths)
+      .alias("user")
+      .where($"user".isNotNull)
+      .select($"user.id", $"user.login")
+      .distinct()
+    }
+  }
+
   def runSingle(history: Dataset[Row], date: String, userPaths: Seq[String], repoPaths: Seq[String]): Unit = {
     val spark = history.sparkSession
     import spark.implicits._
     val payload = history
                   .where($"payload".isNotNull)
                   .select($"payload")
-    val users = allDataframes(history, userPaths)
-                .alias("user")
-                .where($"user".isNotNull)
-                .select($"user.id", $"user.login")
-                .distinct()
-    val repos = allDataframes(history, repoPaths)
-                .alias("repo")
-                .where($"repo".isNotNull)
-                .select($"repo.id", $"repo.name", $"repo.url", $"repo.forks_count", $"repo.stargazers_count")
-                .groupBy($"id", $"name", $"url")
-                .agg(max($"forks_count").as("forks_count"), max($"stargazers_count").as("stargazers_count"))
+    val repos = repo(history, repoPaths)
+    val users = user(history, userPaths)
     val pulls = payload
                 .alias("payload")
                 .select($"payload.pull_request".alias("pr"))
@@ -105,13 +127,23 @@ object GitHistory {
     val repoPulls = pulls
                     .groupBy($"repo")
                     .agg(count("*").alias("repo_pulls"))
-    val usersWithPulls = users
+    val usersWithPulls = broadcast(users)
                          .join(usersPulls.withColumnRenamed("user", "id"), Seq("id"), "left")
                          .na.fill(0, Seq("user_pulls"))
-    val repoWithPulls = repos
+    val repoWithPulls = broadcast(repos)
                         .join(repoPulls.withColumnRenamed("repo", "id"), Seq("id"), "left")
                         .na.fill(0, Seq("repo_pulls"))
-    usersWithPulls.coalesce(numPartitions = 1).write.json(s"data/${date}-users.json")
+    val issues = payload
+                 .alias("payload")
+                 .select($"payload.issue").as("issue")
+                 .where($"issue".isNotNull)
+                 .select($"issue.id".as("id"), $"issue.user.id".as("user"))
+                 .groupBy($"user")
+                 .agg(count("*").alias("user_issues_count"))
+    val usersWithPullsAndIssues = broadcast(usersWithPulls)
+                                  .join(issues.withColumnRenamed("user", "id"), Seq("id"), "left")
+                                  .na.fill(0, Seq("user_issues_count"))
+    usersWithPullsAndIssues.coalesce(numPartitions = 1).write.json(s"data/${date}-users.json")
     repoWithPulls.coalesce(numPartitions = 1).write.json(s"data/${date}-repos.json")
   }
 
@@ -125,7 +157,6 @@ object GitHistory {
                   .read
                   .json("data/*.json.gz")
                   .withColumn("date", subs(col("created_at"), 0, 10))
-                  .drop($"created_at")
                   .cache()
     val superSchema = history
                       .where($"payload".isNotNull)

@@ -73,8 +73,8 @@ class GitHistoryTest extends FlatSpec with Matchers with BeforeAndAfterAll {
 
   "allDataframes" should "collect all objects" in {
     val json = Seq(
-    """{"a": 1, "b": {"pickMe": {"c": "text1"}}}""",
-    """{"a": 2, "pickMe": {"c": "text2"}}"""
+    """{"a": 1, "b": {"pickMe": {"c": "text1"}}, "created_at":0}""",
+    """{"a": 2, "pickMe": {"c": "text2"}, "created_at":0}"""
     )
     val spark = ss
     import spark.implicits._
@@ -85,7 +85,9 @@ class GitHistoryTest extends FlatSpec with Matchers with BeforeAndAfterAll {
     val actual = GitHistory.allDataframes(tested, Seq("b.pickMe", "pickMe"))
     actual.where($"pickMe".isNotNull).toJSON.collect().foreach(r => println(r.mkString))
 
-    actual.toJSON.collect() should contain allOf ("""{"pickMe":{"c":"text1"}}""", """{"pickMe":{"c":"text2"}}""")
+    actual.toJSON.collect().toSet should contain allOf ("""{"pickMe":{"c":"text1"},"created_at":0}""",
+                                                        """{created_at":0}""",
+                                                        """{"pickMe":{"c":"text2"},"created_at":0}""")
   }
 
   "makeName" should "not add prefix" in {
