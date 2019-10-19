@@ -86,8 +86,8 @@ class GitHistoryTest extends FlatSpec with Matchers with BeforeAndAfterAll {
     actual.where($"pickMe".isNotNull).toJSON.collect().foreach(r => println(r.mkString))
 
     actual.toJSON.collect().toSet should contain allOf ("""{"pickMe":{"c":"text1"},"created_at":0}""",
-                                                        """{created_at":0}""",
-                                                        """{"pickMe":{"c":"text2"},"created_at":0}""")
+      """{"created_at":0}""",
+      """{"pickMe":{"c":"text2"},"created_at":0}""") 
   }
 
   "makeName" should "not add prefix" in {
